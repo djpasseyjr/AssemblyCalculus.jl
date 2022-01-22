@@ -1,6 +1,6 @@
 module AssemblyCalculus
 
-    using Distributions: Bionomial
+    using Distributions: Binomial
     using Graphs
     using StatsBase
     using ThreadsX

@@ -71,7 +71,7 @@ function change_in_assembly(area::NeuralArea{T}) where T
     difference = area.assembly_size - intersect(area.firing, area.firing_prev)
 end
 
-## IONCURRENT and ASSEMBLY
+## IONCURRENT
 
 mutable struct IonCurrent{T} # Input current is better i think
     area::NeuralArea
@@ -87,6 +87,8 @@ function random_input_current(na::NeuralArea{T}) where T
     currents = rand(dist, num_neurons)
     return IonCurrent(na, currents)
 end
+
+## ASSEMBLY
 
 mutable struct Assembly{T}
     area::NeuralArea{T}
