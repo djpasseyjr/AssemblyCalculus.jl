@@ -1,3 +1,8 @@
+name = "AssemblyCalculus"
+uuid = "6644f8a4-7ba1-11ec-3c70-090e16a6069e"
+authors = ["DJ Passey <djpasseyjr@gmail.com>"]
+version = "0.0.1"
+
 [deps]
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
