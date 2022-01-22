@@ -13,8 +13,17 @@ mutable struct Neuron{T}
 end
 
 Neuron(T::Type=Float64) = Neuron(0, NeuralArea(T), 0, T(0), Dict{NeuralArea{T}, Dict{Neuron{T}, T}}())
+Base.getindex(n::Neuron{T}, na::NeuralArea{T}) where T = n.synapses[na]
+edges(n::Neuron{T}, na::NeuralArea{T}) where T = length(n[na])
 
-Base.setindex!(n1::Neuron{T}, w::T, na::NeuralArea, n2::Neuron{T}) where T = setindex!(n1.synapses[na], w, n2)
+function Base.setindex!(
+    n1::Neuron{T},
+    w::T,
+    na::NeuralArea,
+    n2::Neuron{T}
+) where T
+    setindex!(n1.synapses[na], w, n2)
+end
 
 ## NEURALAREA
 
@@ -58,7 +67,11 @@ function winners!(na::NeuralArea{T}, currents::Array{T}) where T
     )
 end
 
-## IonCurrent
+function change_in_assembly(area::NeuralArea{T}) where T
+    difference = area.assembly_size - intersect(area.firing, area.firing_prev)
+end
+
+## IONCURRENT and ASSEMBLY
 
 mutable struct IonCurrent{T} # Input current is better i think
     area::NeuralArea
@@ -66,6 +79,14 @@ mutable struct IonCurrent{T} # Input current is better i think
 end
 
 IonCurrent(type::Type=Float64) = IonCurrent(NeuralArea(type), type[])
+
+function random_input_current(na::NeuralArea{T}) where T
+    num_neurons = length(na)
+    p = mapreduce(x -> edges(x, na), +, na.neurons) / (num_neurons ^ 2)
+    dist = Binomial(na.assembly_size, p)
+    currents = rand(dist, num_neurons)
+    return IonCurrent(na, currents)
+end
 
 mutable struct Assembly{T}
     area::NeuralArea{T}
@@ -75,6 +96,14 @@ mutable struct Assembly{T}
 end
 
 Assembly(type::Type=Float64) = Assembly(NeuralArea(type), Int[], IonCurrent{type}[], Assembly{type}[])
+
+function Assembly(
+    na::NeuralArea{T},
+    parent_currents::Array{IonCurrent{T}, 1}
+    parent_assemblies::Array{Assembly{T}, 1}
+) where T
+    reurn Assembly(na, na.firing, parent_currents, parent_assemblies)
+end
 
 ## BRAINAREAS
 mutable struct BrainAreas{T}
@@ -124,24 +153,87 @@ abstract type StopCriteria end
 
 function (sc::StopCriteria)(
     areas::Array{NeuralArea{T}},
-    currents::Array{T, 1}
+    currents::Array{Array{T, 1}}
 ) where T
+    store!(sc, areas)
+    return assess!(sc, areas, currents)
+end
+
+function store!(sc::StopCriteria, areas::Array{NeuralArea{T}, 1}) where T
+    if sc.store
+        firing = [reshape(a.firing, :, 1)  for a in areas]
+        if sc.curr_iter == 0
+            sc.spikes = firing
+        else
+            map(hcat, zip(sc.spikes, firing))
+    end
+    sc.curr_iter += 1
+end
 
 mutable struct Converge <: StopCritera
     curr_iter::Int
-    maxiters::Int
+    max_iters::Int
     tol::Int
     fire_past_convergence::Int
-    iters_convergent::Array{Int}
+    iters_convergent::Array{Int, 1}
+    distances::Array{Array{Int, 2}}
     spikes::Array{Array{Int, 2}}
     record::Bool
 end
 
+function Converge(
+    tol::Int = 2,
+    max_iters::Int = 50
+    fire_past_convergence::Int = 0,
+    record::Bool = true
+)
+    Converge(0, max_iters, tol, fire_past_convergence, zeros(1), [zeros(1, 1)], [zeros(1, 1)], record)
+end
+
+function assess!(
+    cv::Converge,
+    areas::NeuralArea{T},
+    currents::Array{Array{T, 1}}
+) where T
+    if cv.curr_iter == 1
+        cv.iters_convergent = zeros(length(areas))
+        cv.distances = reshape([a.assembly_size for a in areas], :, 1)
+    else
+        distances = reshape([change_in_assembly(a) for a in areas], : 1)
+        hstack(cv.distances, distances)
+    end
+    i = cv.curr_iter
+    # Locate areas where less that `tol` neurons changed from the previous step
+    small_change = cv.distances[:, i] .< cv.tol
+    # Increase the convergent iteration count for the convergent areas
+    cv.iters_convergent[small_change] .+= 1
+    # Set all non convergent areas iteration count to zero
+    cv.iters_convergent[.~small_change] .= 0
+    # Stop if all areas have been convergent for `fire_past_convergence` iters
+    stop = all(iters_convergent >= (1 + cv.fire_past_convergence))
+    # Check if max iters has been reached
+    stop = stop || (sc.curr_iter >= sc.max_iters)
+    return stop
+end
+
 mutable struct MaxIters <: StopCriteria
     curr_iter::Int
-    maxiters::Int
+    max_iters::Int
     spikes::Array{Array{Int, 2}}
     record::Bool
+end
+
+function MaxIters(max_iters::Int = 50, record::Bool = true)
+    return MaxIters(0, max_iters, [zeros(1, 1)], record)
+end
+
+function assess!(
+    cv::MaxIters,
+    areas::NeuralArea{T},
+    currents::Array{Array{T, 1}}
+) where T
+    stop = sc.curr_iter >= sc.max_iters
+    return stop
 end
 
 
@@ -150,6 +242,7 @@ end
 function simulate!(
     inputs::Array{IonCurrent{T}, 1},
     assemblies::Array{Assembly{T}, 1}
+    stop_criteria::StopCriteria
 ) where T
     active_areas = [inp.area for inp in inputs]
     # Consolidate input current with input current from assemblies
@@ -177,6 +270,34 @@ function simulate!(
     final_assemblies = map(x -> Assembly(x, inputs, assemblies), active_areas)
     return inputs, final_assemblies
 end
+
+function simulate!(
+    inputs::Array{IonCurrent{T}, 1},
+    assemblies::Array{Assembly{T}, 1},
+    timesteps::Int
+) where T
+    stop_crit = MaxIters(timesteps, record=true)
+    new_assemblies = simulate!(inputs, assemblies, stop_crit)
+    return new_assemblies, stop_crit.spikes, stop_crit.distances
+end
+
+function simulate!(
+    inputs::Array{IonCurrent{T}, 1},
+    assemblies::Array{Assembly{T}, 1},
+    tol::Int = 2
+    fire_past_convergence::Int = 0,
+    max_iters::Int = 50,
+    record = true
+) where T
+    stop_crit = Converge(tol, fire_past_convergence, max_iters, record)
+    new_assemblies = simulate!(inputs, assemblies, stop_crit)
+    if record
+        return new_assemblies, stop_crit.spikes, stop_crit.distances
+    else
+        return new_assemblies
+    end
+end
+
 
 """
     simulation_currents(
