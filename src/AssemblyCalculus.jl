@@ -5,6 +5,10 @@ module AssemblyCalculus
     using StatsBase
     using ThreadsX
 
+    include("types.jl")
+    include("simulation_functions.jl")
+
+
     export BrainAreas, Assembly, IonCurrent
     export simulate!
 
