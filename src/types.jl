@@ -83,10 +83,13 @@ end
 """Constructs an empty `NeuralArea`."""
 NeuralArea(T::Type=Float64) = NeuralArea(Neuron{T, NeuralArea{T}}[], 0, Int[], Int[], T(0))
 
-"""Constructs an empty `NeuralArea` with assembly
+"""Constructs an empty `NeuralArea` with `n` neurons, assembly
 size `k` and plasticity `β`."""
-NeuralArea(k::Int, β::T) where T = NeuralArea(Neuron{T, NeuralArea{T}}[], k, Int[], Int[], β)
-
+function NeuralArea(num_neurons::Int, assem_size::Int, plasticity::T) where T
+    area = NeuralArea(Neuron{T, NeuralArea{T}}[], assem_size, Int[], Int[], plasticity)
+    area.neurons = [Neuron(area, i, empty_synapses(T)) for i in 1:num_neurons]
+    return area
+end
 """Number of neurons in a  `NeuralArea`."""
 Base.length(na::NeuralArea) = length(na.neurons)
 
@@ -233,14 +236,21 @@ end
 
 """Returns the number of neural areas in a `BrainAreas` type."""
 Base.length(ba::BrainAreas) = length(ba.areas)
+
+"""Returns the `i`th `NeuralArea` stored in `BrainAreas`.
+"""
 Base.getindex(ba::BrainAreas, i::Int) = ba.areas[i]
+
+"""Selects the `NeuralArea` corresponding to the given name."""
 function select(ba::BrainAreas{K, T}, k::K) where {K, T}
     i = find(ba.names == k)
     i == nothing && error("No brain area with name $k.")
     return ba.areas[i]
 end
 
+"""Total number of synapses in `BrainAreas`."""
 num_synapses(ba::BrainAreas{K, T}) where {K, T} = mapreduce(num_synapses, +, ba.areas)
+"""Total number of neurons in `BrainAreas`."""
 num_neurons(ba::BrainAreas{K, T}) where {K, T} = mapreduce(length, +, ba.areas)
 
 function Base.show(io::IO, ba::BrainAreas{K, T}) where {K, T}
@@ -253,28 +263,41 @@ function Base.show(io::IO, ba::BrainAreas{K, T}) where {K, T}
     end
 end
 
+"""Returns the index of `neuron` with respect to all neurons in the `BrainAreas`.
+"""
 function global_index(ba::BrainAreas, neuron::Neuron)
     return global_index(ba, neuron.area, neuron.idx)
 end
 
+"""Returns the index of the neuron in `na` at index `idx` with respect to
+all neurons in the `BrainAreas`.
+"""
 function global_index(ba::BrainAreas, na::NeuralArea, idx::Int)
     i = findfirst([a == na for a in ba.areas])
     i == nothing && error("Given NeuralArea not found in BrainAreas")
     return global_index(ba, i, idx)
 end
 
+"""Given the index, `area_idx`, for a `NeuralArea` within `ba`, and and index
+`idx` of a neuron in the `NeuralArea` corresponding to `area_idx`, returns the
+`index` of the neuron relative to all neurons in `ba`.
+"""
 function global_index(ba::BrainAreas, area_idx::Int, idx::Int)
     global_idx = sum([length(a) for a in ba.areas[1:(area_idx-1)]]) + idx
     return global_idx
 end
 
+"""For the given `BrainAreas`, and the index of a `Neuron` in the `BrainAreas`,
+return the local index, `(area_idx, idx)`. That is, the index of the neruon's
+parent area, `area_idx` (within `ba`) and the neuron's index within its
+parent `NeuralArea`, `idx`."""
 function local_index(ba::BrainAreas, global_idx::Int)
     area_sizes = [length(na) for na in ba.areas]
     area_adjusted_idxs = cumsum(area_sizes) .- global_idx
-    area = findfirst(area_adjusted_idxs .>= 0)
-    prior_areas = [area_sizes[j] for j in 1:(area - 1)]
+    area_idx = findfirst(area_adjusted_idxs .>= 0)
+    prior_areas = [area_sizes[j] for j in 1:(area_idx - 1)]
     idx = length(prior_areas) == 0 ? global_idx : global_idx - sum(prior_areas)
-    return area, idx
+    return area_idx, idx
 end
 
 """Access the `i`th neuron in the `BrainAreas`.
@@ -301,7 +324,9 @@ function BrainAreas(
     assembly_sizes::Array{Int, 1},
     plasticities::Array{T, 1},
 ) where {T, F}
+    # Make neural areas
     areas = [NeuralArea(k, β) for (k, β) in zip(assembly_sizes, plasticities)]
+    # Make neurons
     for (a, sz) in zip(areas, area_sizes)
         a.neurons = [Neuron(a, i, empty_synapses(T)) for i in 1:sz]
     end
@@ -353,6 +378,9 @@ function Base.get!(ag::AttributionGraph{N}, n::N) where N
     return get!(ag.contributors, n, N[])
 end
 
+"""Returns the value corresponding to key `n` or returns `default` if the key
+is not found.
+"""
 function Base.get(ag::AttributionGraph{N}, n::N, default) where N
     return get(ag.contributors, n, default)
 end

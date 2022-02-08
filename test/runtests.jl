@@ -111,8 +111,7 @@ end
     @testset "Constructors" begin
         @test getparam(IonCurrent()) == Float64
         @test getparam(IonCurrent(Float32)) == Float32
-        area1 = NeuralArea(20, 0.01)
-        area1.neurons = [Neuron(area1, i, empty_synapses(Float64)) for i in 1:4000]
+        area1 = NeuralArea(4000, 20, 0.01)
         # One edge per neuron
         for neuron in area1
             neuron[area1, neuron] = 1.0
@@ -150,6 +149,15 @@ end
 
 @testset "BrainAreas" begin
     @testset "Constructors" begin
+        g = erdos_renyi(10, 0.1, is_directed=true)
+        sizes = [3, 3, 4]
+        assemblies = [1, 1, 2]
+        plasticities = [.01f8, .01f8, .01f8]
+        ba = BrainAreas(g, sizes, assemblies, plasticities)
+        @test length(ba) == 3
+        @test typeof(ba[2]) == NeuralArea{Float32}
+
+
     end
     @testset "Type Utilities" begin
     end
