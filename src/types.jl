@@ -98,7 +98,7 @@ Base.iterate(na::NeuralArea, i::Int64) = iterate(na.neurons, i)
 Base.getindex(na::NeuralArea, i::Int) = na.neurons[i]
 
 num_neurons(na::NeuralArea) = length(na)
-num_synapses(na::NeuralArea) = mapreduce(num_synapses, +, na.neurons)
+num_synapses(na::NeuralArea) = length(na) == 0 ? 0 : mapreduce(num_synapses, +, na.neurons)
 
 """Print format for `NeuralArea`."""
 function Base.show(io::IO, na::NeuralArea{T}) where T
@@ -108,22 +108,50 @@ end
 
 """Randomly assigns neurons in the area to fire."""
 function random_firing!(area::NeuralArea{T}) where T
+    length(area) < area.assembly_size && error(string(
+        "NeuralArea assembly size ($(area.assembly_size)) is larger than the ",
+        "number of neurons in the area ($(length(area))."))
     area.firing = sample(1:length(area), area.assembly_size, replace=false)
 end
 
 """Assigns the indexes of the k largest currents in `currents` to `na.firing`."""
-function winners!(na::NeuralArea{T}, currents::Array{T}) where T
-    na.firing_prev = na.firing
-    partial_sort = sortperm(
-        currents,
-        rev=true,
-        alg=PartialQuickSort(na.assembly_size)
-    )
-    na.firing = partial_sort[1:na.assembly_size]
+function winners!(area::NeuralArea{T}, currents::Array{T}) where T
+    # Validate
+    length(area) != length(currents) && error(string(
+        "Number of neurons in area ($(length(area))) must equal the number of ",
+        "input currents ($(length(currents)))"))
+    length(area) < area.assembly_size && error(string(
+        "NeuralArea assembly size ($(area.assembly_size)) is larger than the ",
+        "number of neurons in the area ($(length(area)))."))
+    # Reassign currently firing neurons
+    area.firing_prev = area.firing
+    nonzero = findall(currents .> T(0))
+    nnz = length(nonzero)
+    # Check for positive nonzero currents
+    if nnz == nothing
+        # If no currents are positive, no neurons fire.
+        area.firing = Int[]
+    else
+        # If the number of positive currents is smaller than the
+        # assembly size, all neurons getting a positive current fire.
+        if nnz < area.assembly_size
+            area.firing = nonzero
+        else
+            # If the number of neurons getting positive current is
+            # greater than the assembly size, only the neurons
+            # receiving the largest current fire.
+            partial_sort = sortperm(
+                currents[nonzero],
+                rev=true,
+                alg=PartialQuickSort(area.assembly_size)
+            )
+            area.firing = nonzero[partial_sort[1:area.assembly_size]]
+        end
+    end
 end
 
 function change_in_assembly(area::NeuralArea{T}) where T
-    difference = area.assembly_size - intersect(area.firing, area.firing_prev)
+    difference = area.assembly_size - length(intersect(area.firing, area.firing_prev))
 end
 
 """Constructs empty synapses for a `Neuron` type with `NeuralArea` keys."""
@@ -141,14 +169,27 @@ mutable struct IonCurrent{T}
     currents::Array{T, 1}
 end
 
-IonCurrent(type::Type=Float64) = IonCurrent(NeuralArea(type), type[])
+IonCurrent(T::Type=Float64) = IonCurrent(NeuralArea(T), T[])
 
-function random_input_current(na::NeuralArea{T}) where T
-    num_neurons = length(na)
-    p = mapreduce(x -> num_synapses(x, na), +, na.neurons) / (num_neurons ^ 2)
-    dist = Binomial(na.assembly_size, p)
-    currents = T.(rand(dist, num_neurons))
-    return IonCurrent(na, currents)
+"""Constructs a random pattern of ionic currents corresponding to the
+passed `NeuralArea`. Returns a `IonCurrent` type.
+"""
+function random_current(area::NeuralArea{T}; p::Union{Nothing, T} = nothing) where T
+    n = num_neurons(area)
+    if p == nothing
+        p = mapreduce(x -> num_synapses(x, area), +, area.neurons) / (n ^ 2)
+    elseif ! (0 < p < 1)
+        error("Argument `p` must be `nothing`, or be in the interval (0, 1).")
+    end
+    currents = rand(Binomial(area.assembly_size, p), n)
+    return IonCurrent(area, T.(currents))
+end
+""" Constructs an `IonCurrent` that sends zero current to all the neurons
+in the passed `NeuralArea`.
+"""
+function zero_current(area::NeuralArea{T}) where T
+    n = num_neurons(area)
+    return IonCurrent(area, zeros(T, n))
 end
 
 function Base.show(io::IO, ic::IonCurrent{T}) where T
@@ -165,13 +206,16 @@ mutable struct Assembly{T}
     parent_assemblies::Array{Assembly{T}, 1}
 end
 
-Assembly(type::Type=Float64) = Assembly(NeuralArea(type), Int[], IonCurrent{type}[], Assembly{type}[])
+Assembly(T::Type=Float64) = Assembly(NeuralArea(T), Int[], IonCurrent{T}[], Assembly{T}[])
 
 function Assembly(
     na::NeuralArea{T},
     parent_currents::Array{IonCurrent{T}, 1},
     parent_assemblies::Array{Assembly{T}, 1},
 ) where T
+    if length(na.firing) == 0
+        error("No neurons firing in `NeuralArea`")
+    end
     return Assembly(na, na.firing, parent_currents, parent_assemblies)
 end
 
@@ -179,6 +223,7 @@ function Base.show(io::IO, assem::Assembly{T}) where T
     k = length(assem.neurons)
     print(io, "Assembly{$T} of $k neurons")
 end
+
 
 ## BRAINAREAS
 mutable struct BrainAreas{K, T}

@@ -1,10 +1,13 @@
 using AssemblyCalculus
-using AssemblyCalculus: Neuron, NeuralArea, empty_synapses, num_synapses
+using AssemblyCalculus: Neuron, empty_synapses, num_synapses
+using AssemblyCalculus: NeuralArea, num_neurons, random_firing!, winners!, change_in_assembly
+using AssemblyCalculus: IonCurrent, random_current, zero_current
+using StatsBase
 using Test
 
-findparam(n::Neuron{T, U}) where {T, U} = T
 
 @testset "Neuron" begin
+    findparam(n::Neuron{T, U}) where {T, U} = T
     @testset "Constructors" begin
         neuronf64 = Neuron()
         neuronf32 = Neuron(Float32)
@@ -42,25 +45,106 @@ findparam(n::Neuron{T, U}) where {T, U} = T
 end
 
 @testset "NeuralArea" begin
-
+    findparam(na::NeuralArea{T}) where T = T
     @testset "Constructors" begin
-
+        na = NeuralArea()
+        @test findparam(na) == Float64
+        @test findparam(NeuralArea(Float32)) == Float32
+        @test findparam(NeuralArea(10, 1.0)) == Float64
+        @test findparam(NeuralArea(10, 1.0f8)) == Float32
+        na = NeuralArea()
+        @test num_neurons(na) == 0
+        push!(na.neurons, Neuron())
+        @test num_neurons(na) == 1
+        @test_throws UndefVarError push!(na.neurons, Neurons(Float32))
     end
-    @testset "Type Utilities" begin
+    @testset "Utilities" begin
+        T = Float32
+        area1 = NeuralArea(T)
+        neuron1 = Neuron(area1, 1, empty_synapses(T))
+        push!(area1.neurons, neuron1)
+        area2 = NeuralArea(T)
+        neuron2 = Neuron(area2, 1, empty_synapses(T))
+        push!(area2.neurons, neuron2)
+        neuron1[area2, neuron2] = 1.5f8
+        neuron2[area1, neuron1] = 1.7f8
+        @test num_synapses(area1) == 1
+        @test num_synapses(area2) == 1
+        for n in area1
+            @test num_synapses(n) == 1
+        end
+        @test length(area1.firing) == 0
+        area1.assembly_size = 1
+        random_firing!(area1)
+        @test length(area1.firing) == 1
+        area1.assembly_size = 2
+        @test_throws ErrorException random_firing!(area1)
+        # k-winners
+        area1.assembly_size = 3
+        @test_throws ErrorException winners!(area1, rand(Float32, 3))
+        for i in 2:9
+            push!(area1.neurons, Neuron(area1, i, empty_synapses(Float32)))
+        end
+        currents = zeros(Float32, 10)
+        @test_throws ErrorException winners!(area1, currents)
+        push!(area1.neurons, Neuron(area1, 10, empty_synapses(Float32)))
+        winners!(area1, currents)
+        @test length(area1.firing) == 0
+        currents[2:4] .= 1.0f8
+        winners!(area1, currents)
+        @test all(area1.firing .== [2, 3, 4])
+        currents = rand(Float32, 10)
+        perm = sortperm(currents, rev=true)
+        winners!(area1, currents)
+        @test all(area1.firing .== perm[1:3])
+        # Prev assembly comparison
+        area1.firing = [1, 2, 3]
+        area1.firing_prev = [1, 2, 3]
+        @test change_in_assembly(area1) == 0
+        area1.firing = [1, 2, 4]
+        @test change_in_assembly(area1) == 1
     end
 end
 
 @testset "IonCurrent Type" begin
+    getparam(ic::IonCurrent{T}) where T = T
     @testset "Constructors" begin
-    end
-    @testset "Type Utilities" begin
+        @test getparam(IonCurrent()) == Float64
+        @test getparam(IonCurrent(Float32)) == Float32
+        area1 = NeuralArea(20, 0.01)
+        area1.neurons = [Neuron(area1, i, empty_synapses(Float64)) for i in 1:4000]
+        # One edge per neuron
+        for neuron in area1
+            neuron[area1, neuron] = 1.0
+        end
+        ic = random_current(area1)
+        @test ic.area == area1
+        @test length(ic.currents) == length(area1)
+        @test 0.001 < mean(ic.currents) < 0.01
+        ic = random_current(area1, p=1. / 400)
+        @test ic.area == area1
+        @test length(ic.currents) == length(area1)
+        @test 0.01 < mean(ic.currents) < 0.1
+        @test sum(zero_current(area1).currents) == 0
+        @test_throws ErrorException random_current(area1, p=1.0)
     end
 end
 
 @testset "Assembly" begin
+    getparam(a::Assembly{T}) where T = T
     @testset "Constructors" begin
-    end
-    @testset "Type Utilities" begin
+        @test getparam(Assembly()) == Float64
+        @test getparam(Assembly(Float32)) == Float32
+        area1 = NeuralArea(10, 0.01)
+        area1.neurons = [Neuron(area1, i, empty_synapses(Float64)) for i in 1:100]
+        ic = zero_current(area1)
+        @test_throws ErrorException Assembly(area1, [ic], Assembly{Float64}[])
+        random_firing!(area1)
+        a = Assembly(area1, [ic], Assembly{Float64}[])
+        @test a.area == area1
+        @test length(a.parent_currents) == 1
+        @test length(a.parent_assemblies) == 0
+        @test length(a.neurons) == area1.assembly_size
     end
 end
 
