@@ -2,6 +2,8 @@ using AssemblyCalculus
 using AssemblyCalculus: Neuron, empty_synapses, num_synapses
 using AssemblyCalculus: NeuralArea, num_neurons, random_firing!, winners!, change_in_assembly
 using AssemblyCalculus: IonCurrent, random_current, zero_current
+using AssemblyCalculus: getneuron, globalindex, select, neuron_attrib_graph
+using Graphs
 using StatsBase
 using Test
 
@@ -50,8 +52,8 @@ end
         na = NeuralArea()
         @test findparam(na) == Float64
         @test findparam(NeuralArea(Float32)) == Float32
-        @test findparam(NeuralArea(10, 1.0)) == Float64
-        @test findparam(NeuralArea(10, 1.0f8)) == Float32
+        @test findparam(NeuralArea(100, 10, 1.0)) == Float64
+        @test findparam(NeuralArea(100, 10, 1.0f8)) == Float32
         na = NeuralArea()
         @test num_neurons(na) == 0
         push!(na.neurons, Neuron())
@@ -134,8 +136,7 @@ end
     @testset "Constructors" begin
         @test getparam(Assembly()) == Float64
         @test getparam(Assembly(Float32)) == Float32
-        area1 = NeuralArea(10, 0.01)
-        area1.neurons = [Neuron(area1, i, empty_synapses(Float64)) for i in 1:100]
+        area1 = NeuralArea(100, 10, 0.01)
         ic = zero_current(area1)
         @test_throws ErrorException Assembly(area1, [ic], Assembly{Float64}[])
         random_firing!(area1)
@@ -148,17 +149,38 @@ end
 end
 
 @testset "BrainAreas" begin
+    g = erdos_renyi(10, 1.0, is_directed=true)
+    sizes = [3, 3, 4]
+    assemblies = [1, 1, 2]
+    plasticities = [.01f8, .01f8, .01f8]
+    ba = BrainAreas(g, sizes, assemblies, plasticities)
     @testset "Constructors" begin
-        g = erdos_renyi(10, 0.1, is_directed=true)
-        sizes = [3, 3, 4]
-        assemblies = [1, 1, 2]
-        plasticities = [.01f8, .01f8, .01f8]
-        ba = BrainAreas(g, sizes, assemblies, plasticities)
         @test length(ba) == 3
         @test typeof(ba[2]) == NeuralArea{Float32}
-
-
+        @test num_synapses(ba) == 90
+        @test num_neurons(ba) == 10
+        adj = Float32.(rand(10, 10) .< 0.2)
+        ba = BrainAreas(adj, sizes, assemblies, plasticities)
+        @test all(adj .== adjacency_matrix(ba))
     end
     @testset "Type Utilities" begin
+        g_idx = 5
+        @test globalindex(ba, getneuron(ba, g_idx)) == g_idx
+        @test select(ba, 1) == ba.areas[1]
+        @test_throws ErrorException select(ba, 4)
+    end
+end
+
+@testset "AtributionGraph" begin
+    @testset "Constructors" begin
+        T = Float32
+        n1, n2, n3 = Neuron(T), Neuron(T), Neuron(T)
+        ag = neuron_attrib_graph(T)
+        contributors = get!(ag, n1)
+        push!(contributors, n2)
+        contributors = get!(ag, n1)
+        push!(contributors, n3)
+        @test all(ag[n1] .== [n2, n3])
+
     end
 end

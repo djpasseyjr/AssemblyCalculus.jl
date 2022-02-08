@@ -243,7 +243,7 @@ Base.getindex(ba::BrainAreas, i::Int) = ba.areas[i]
 
 """Selects the `NeuralArea` corresponding to the given name."""
 function select(ba::BrainAreas{K, T}, k::K) where {K, T}
-    i = find(ba.names == k)
+    i = findfirst(ba.names .== k)
     i == nothing && error("No brain area with name $k.")
     return ba.areas[i]
 end
@@ -265,24 +265,24 @@ end
 
 """Returns the index of `neuron` with respect to all neurons in the `BrainAreas`.
 """
-function global_index(ba::BrainAreas, neuron::Neuron)
-    return global_index(ba, neuron.area, neuron.idx)
+function globalindex(ba::BrainAreas, neuron::Neuron)
+    return globalindex(ba, neuron.area, neuron.idx)
 end
 
 """Returns the index of the neuron in `na` at index `idx` with respect to
 all neurons in the `BrainAreas`.
 """
-function global_index(ba::BrainAreas, na::NeuralArea, idx::Int)
+function globalindex(ba::BrainAreas, na::NeuralArea, idx::Int)
     i = findfirst([a == na for a in ba.areas])
     i == nothing && error("Given NeuralArea not found in BrainAreas")
-    return global_index(ba, i, idx)
+    return globalindex(ba, i, idx)
 end
 
 """Given the index, `area_idx`, for a `NeuralArea` within `ba`, and and index
 `idx` of a neuron in the `NeuralArea` corresponding to `area_idx`, returns the
 `index` of the neuron relative to all neurons in `ba`.
 """
-function global_index(ba::BrainAreas, area_idx::Int, idx::Int)
+function globalindex(ba::BrainAreas, area_idx::Int, idx::Int)
     global_idx = sum([length(a) for a in ba.areas[1:(area_idx-1)]]) + idx
     return global_idx
 end
@@ -291,7 +291,7 @@ end
 return the local index, `(area_idx, idx)`. That is, the index of the neruon's
 parent area, `area_idx` (within `ba`) and the neuron's index within its
 parent `NeuralArea`, `idx`."""
-function local_index(ba::BrainAreas, global_idx::Int)
+function localindex(ba::BrainAreas, global_idx::Int)
     area_sizes = [length(na) for na in ba.areas]
     area_adjusted_idxs = cumsum(area_sizes) .- global_idx
     area_idx = findfirst(area_adjusted_idxs .>= 0)
@@ -306,14 +306,14 @@ end
 That is, if `a1` is a neural area with 200 `Neurons` and `a2` is a `NeuralArea`
 with 100 `Neurons`, then if
 
-    ba = BrainAreas(Dict(1 => a1, 2 => a2))
+    ba = BrainAreas([a1, a2], [1, 2])
 
 `getneuron(ba, 201)` will return the first neuron in `a2` (`a2[1]`) and
 `getneuron(ba, 1)` will return the first neuron in `a1`.
 
 """
 function getneuron(ba::BrainAreas, global_idx::Int)
-    area, idx = local_index(ba, global_idx)
+    area, idx = localindex(ba, global_idx)
     return ba[area][idx]
 end
 
@@ -323,13 +323,9 @@ function BrainAreas(
     area_sizes::Array{Int, 1},
     assembly_sizes::Array{Int, 1},
     plasticities::Array{T, 1},
-) where {T, F}
+) where T
     # Make neural areas
-    areas = [NeuralArea(k, β) for (k, β) in zip(assembly_sizes, plasticities)]
-    # Make neurons
-    for (a, sz) in zip(areas, area_sizes)
-        a.neurons = [Neuron(a, i, empty_synapses(T)) for i in 1:sz]
-    end
+    areas = [NeuralArea(n, k, β) for (n, k, β) in zip(area_sizes, assembly_sizes, plasticities)]
     brain_areas = BrainAreas(areas, collect(1:length(areas)))
     for e in edges(g)
         source = getneuron(brain_areas, e.src)
@@ -339,15 +335,25 @@ function BrainAreas(
     return brain_areas
 end
 
+"""Initializes `BrainAreas` from an adjacency matrix."""
+function BrainAreas(
+    adj::Array{T, 2},
+    area_sizes::Array{Int, 1},
+    assembly_sizes::Array{Int, 1},
+    plasticities::Array{T, 1},
+) where T
+    return BrainAreas(DiGraph(transpose(adj)), area_sizes, assembly_sizes, plasticities)
+end
+
 function Graphs.adjacency_matrix(ba::BrainAreas{K, T}) where {K, T}
     n = num_neurons(ba)
     adj = zeros(T, n, n)
     for a in ba.areas
         for neuron in a.neurons
-            source_idx = global_index(ba, neuron)
+            source_idx = globalindex(ba, neuron)
             for area in keys(neuron.synapses)
                 for (target_neuron, weight) in neuron[area]
-                    target_idx = global_index(ba, target_neuron)
+                    target_idx = globalindex(ba, target_neuron)
                     adj[target_idx, source_idx] = weight
                 end
             end

@@ -177,8 +177,8 @@ function fire!(
         # Add ion current to the current array
         current[target_neuron.idx] += w
         # Update attribution graph entry for target neuron
-        contribs = get!(attrib, target_neuron)
-        push!(contribs, neuron)
+        contributors = get!(attrib, target_neuron)
+        push!(contributors, neuron)
     end
 end
 

@@ -6,7 +6,7 @@ module AssemblyCalculus
     using ThreadsX
 
     include("types.jl")
-    include("simulation_functions.jl"
+    include("simulation_functions.jl")
 
     export BrainAreas, Assembly, IonCurrent
     export simulate!
