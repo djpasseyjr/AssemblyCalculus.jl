@@ -11,16 +11,19 @@ Email: djpasseyjr@gmail.com
 function simulate!(
     inputs::Array{IonCurrent{T}, 1},
     assemblies::Array{Assembly{T}, 1},
-    stop_criteria::StopCriteria
+    stop_criteria::StopCriteria;
+    random_initial::Bool = true
 ) where T
+    # TODO Validate inputs and assemblies
     active_areas = [inp.area for inp in inputs]
     # Consolidate input current with current from assemblies
     currents, assem_attrib = simulation_currents(inputs, assemblies)
     # Save initial input currents
     init_currents = deepcopy(currents)
     # Assign random neurons to fire initially
-    map(random_firing!, active_areas)
-    # Allocate ion current arrays for each area TODO better name for next_currents
+    random_initial && map(random_firing!, active_areas)
+    # Allocate ion current arrays for each area
+    # TODO better name for next_currents (Stimulus!)
     next_currents = deepcopy(currents)
     # stop_criteria checks for convergence
     while ! stop_criteria(active_areas, currents)
@@ -44,23 +47,30 @@ end
 function simulate!(
     inputs::Array{IonCurrent{T}, 1},
     assemblies::Array{Assembly{T}, 1},
-    timesteps::Int
+    timesteps::Int;
+    random_initial::Bool = true
 ) where T
     stop_criteria = MaxIters(max_iters=timesteps, record=true)
-    new_assemblies = simulate!(inputs, assemblies, stop_criteria)
+    new_assemblies = simulate!(inputs, assemblies, stop_criteria, random_initial=random_initial)
     return new_assemblies, stop_criteria.spikes
 end
 
 function simulate!(
     inputs::Array{IonCurrent{T}, 1},
-    assemblies::Array{Assembly{T}, 1},
+    assemblies::Array{Assembly{T}, 1};
     record = true,
     tol::Int = 2,
     fire_past_convergence::Int = 0,
     max_iters::Int = 50,
+    random_initial::Bool = true
 ) where T
-    stop_criteria = Converge(tol, fire_past_convergence, max_iters, record)
-    new_assemblies = simulate!(inputs, assemblies, stop_criteria)
+    stop_criteria = Converge(
+        tol=tol,
+        fire_past_convergence=fire_past_convergence,
+        max_iters=max_iters,
+        record=record
+    )
+    new_assemblies = simulate!(inputs, assemblies, stop_criteria, random_initial=random_initial)
     if record
         return new_assemblies, stop_criteria.spikes, stop_criteria.distances
     else
@@ -76,12 +86,12 @@ end
     ) where T -> currents, attribution
 
 Computes the ionic current flow into each area and creates an attribution
-graph to be used for plasticity updates.
+graph to be used for ion current and assembly plasticity updates.
 
 **Parameters**
 
-1. `inputs`
-2. `assemblies`
+1. `inputs` The list of IonCurrents to be used in the simulation
+2. `assemblies` The list of active Assemblies for the simulation
 
 """
 function simulation_currents(
@@ -90,7 +100,7 @@ function simulation_currents(
 ) where T
     # Allocate
     currents = [zeros(T, size(inp.currents)) for inp in inputs]
-    attrib = neuron_attrib_graph(T)
+    attrib = neuron_attrib_graph(T, typeof(inputs[1].area))
     # Compute currents and attributions
     for (i, inp) in enumerate(inputs)
         currents[i] += inp.currents
@@ -108,8 +118,8 @@ end
 """
     fire!(
         assembly::Assembly{T},
-        area::NeuralArea{T},
-        area_currents::Array{T, 1},
+        area::BrainRegion{T},
+        currents::Array{T, 1},
         attrib::AttributionGraph{Neuron{T, U}}
     ) where {T, U}
 
@@ -118,22 +128,22 @@ currents to corresponding neuron indexes in `current` array.
 """
 function fire!(
     assembly::Assembly{T},
-    area::NeuralArea{T},
-    current::Array{T, 1},
+    area::BrainRegion{T},
+    currents::Array{T, 1},
     attrib::AttributionGraph{Neuron{T, U}}
 ) where {T, U}
     # Fire each neuron in the assembly into the target area
     for idx in assembly.neurons
         neuron = assembly.area.neurons[idx]
-        fire!(neuron, area, current, attrib)
+        fire!(neuron, area, currents, attrib)
     end
 end
 
 """
     fire!(
-        source_area::NeuralArea{T},
-        target_area::NeuralArea{T},
-        current::Array{T, 1},
+        source_area::BrainRegion{T},
+        target_area::BrainRegion{T},
+        target_currents::Array{T, 1},
         attrib::AttributionGraph{Neuron{T, U}}
     ) where {T, U}
 
@@ -142,23 +152,23 @@ currents to corresponding neuron indexes in `currents` array. Collects
 neurons into the attribution graph.
 """
 function fire!(
-    source_area::NeuralArea{T},
-    target_area::NeuralArea{T},
-    current::Array{T, 1},
+    source_area::BrainRegion{T},
+    target_area::BrainRegion{T},
+    target_currents::Array{T, 1},
     attrib::AttributionGraph{Neuron{T, U}}
 ) where {T, U}
     # Fire each neuron in the assembly into the target area
     for idx in source_area.firing
         neuron = source_area.neurons[idx]
-        fire!(neuron, target_area, current, attrib)
+        fire!(neuron, target_area, target_currents, attrib)
     end
 end
 
 """
     fire!(
         neuron::Neuron{T, U},
-        area::NeuralArea{T},
-        currents::Array{T, 1},
+        target_area::BrainRegion{T},
+        target_currents::Array{T, 1},
         attrib::AttributionGraph{Neuron{T, U}}
     ) where {T, U}
 
@@ -168,35 +178,36 @@ to the `AttributionGraph`.
 """
 function fire!(
     neuron::Neuron{T, U},
-    area::NeuralArea{T},
-    current::Array{T, 1},
+    target_area::BrainRegion{T},
+    target_currents::Array{T, 1},
     attrib::AttributionGraph{Neuron{T, U}}
 ) where {T, U}
     # For each synapse into the target area
-    for (target_neuron, w) in get(neuron, area, Dict{Neuron{T}, T}())
+    for (target_neuron, w) in get(neuron, target_area, Dict{Neuron{T}, T}())
         # Add ion current to the current array
-        current[target_neuron.idx] += w
+        target_currents[target_neuron.idx] += w
         # Update attribution graph entry for target neuron
         contributors = get!(attrib, target_neuron)
         push!(contributors, neuron)
     end
 end
 
+
 """
     fire!(
-        areas::Array{NeuralArea{T}, 1},
-        currents::Array{Array{T, 1}}
+        areas::Array{<:BrainRegion{T}, 1},
+        area_currents::Array{Array{T, 1}}
     ) where T -> attrib
 
 Fires all active neurons in each area. Collects ion currents in `currents`.
 Returns an `AttributionGraph` of the firing.
 """
 
-function fire!(areas::Array{NeuralArea{T}, 1}, currents::Array{Array{T, 1}}) where T
-    attrib = neuron_attrib_graph(T)
+function fire!(areas::Array{U, 1}, area_currents::Array{Array{T, 1}}) where {T, U <:BrainRegion{T}}
+    attrib = neuron_attrib_graph(T, U)
     for source_area in areas
-        for (target_area, current) in zip(areas, currents)
-            fire!(source_area, target_area, current, attrib)
+        for (target_area, target_currents) in zip(areas, area_currents)
+            fire!(source_area, target_area, target_currents, attrib)
         end
     end
     return attrib
@@ -205,43 +216,49 @@ end
 ## HEBB_UPDATE! FUNCTIONS
 
 """
-    hebb_update!(neuron::Neuron{T, U},     attrib::AttributionGraph{Neuron{T, U}})
+    hebb_update!(
+        neuron::Neuron{T, U},
+        attrib::AttributionGraph{Neuron{T, U}};
+        pow::Int=1
+    ) where {T, U}
 
 Uses the attribution graph to find which synapses fired on to `neuron`
 in the previous timestep. Increases these synapses multiplicatively according
-to the plasticity of their parent neuron's area.
+to the plasticity of their parent neuron's area. The parameter `pow` controls
+how many multiplicative updates to apply.
 """
 function hebb_update!(
     neuron::Neuron{T, U},
-    attrib::AttributionGraph{Neuron{T, U}}
+    attrib::AttributionGraph{Neuron{T, U}};
+    pow::T = T(1)
 ) where {T, U}
     source_neurons = get(attrib, neuron, Neuron{T, U}[])
     if length(source_neurons) != 0
         for source_neuron in source_neurons
             β = source_neuron.area.plasticity
             w = source_neuron[neuron.area][neuron]
-            source_neuron[neuron.area][neuron] = w * (1 + β)
+            source_neuron[neuron.area][neuron] = w * (1 + β)^pow
         end
     end
 end
 
 """
-    hebb_update!(area::NeuralArea{T}, attrib::AttributionGraph{Neuron{T, U}})
+    hebb_update!(area::BrainRegion{T}, attrib::AttributionGraph{Neuron{T, U}})
 
 Uses the attribution graph to update the synapses pointing to all currently
 firing neurons in `area`.
 """
-function hebb_update!(area::NeuralArea{T}, attrib::AttributionGraph{Neuron{T, U}}) where {T, U}
+function hebb_update!(area::BrainRegion{T}, attrib::AttributionGraph{Neuron{T, U}}) where {T, U}
     map(n -> hebb_update!(n, attrib), area.neurons[area.firing])
 end
 
 """
-    hebb_update!(area::NeuralArea{T}, current::Array{T, 1}) where T
+    hebb_update!(area::BrainRegion{T}, current::Array{T, 1}) where T
 
 Multiplicatively increases the current into currently firing neurons in `area`
 by a factor of `(1 + area.plasticity)`.
 """
-function hebb_update!(area::NeuralArea{T}, current::Array{T, 1}) where T
+function hebb_update!(area::BrainRegion{T}, current::Array{T, 1}) where T
     current[area.firing] .*= (1 + area.plasticity)
 end
 
@@ -263,18 +280,37 @@ timestep.
 """
 function hebb_update!(
     attrib::AttributionGraph{Neuron{T, U}},
-    input::IonCurrent{T},
+    ic::IonCurrent{T},
     currents::Array{T, 1},
-    init_currents::Array{T, 1}
+    init_currents::Array{T, 1},
 ) where {T, U}
-    @show nonzero = findall(currents != 0.)
-    growth = currents[nonzero] ./ init_currents[nonzero]
-    growth_idx = nonzero[findall(growth .> 1.)]
-    # Update input
-    @show input.currents[growth_idx] .*= (1 + input.area.plasticity)
+    times_grown = _find_growth(currents, init_currents, ic.area.plasticity)
     # Update assembly synapses
-    for idx in growth_idx
-        neuron = input.area.neurons[idx]
-        hebb_update!(neuron, attrib)
+    for (i, pow) in enumerate(times_grown)
+        if pow > 0
+            ic.currents[i] *= (1 + ic.area.plasticity) ^ pow
+            neuron = ic.area.neurons[i]
+            hebb_update!(neuron, attrib, pow=pow)
+        end
     end
+end
+
+"""Computes the number of multiplicative updates applied to the ion
+currents during the simulation.
+"""
+function _find_growth(
+    currents::Array{T, 1},
+    init_currents::Array{T, 1},
+    plasticity::T
+) where T
+    # Find nonzero ion currents
+    nonzero = findall(currents .!= T(0))
+    nonzero == nothing && return zeros(T, size(currents))
+    # Compute multiplicative change from the initial current
+    change = currents[nonzero] ./ init_currents[nonzero]
+    # Compute how many multiplicative updates occured given the plasticity
+    nz_times_grown = log.(change) ./ log(1 + plasticity)
+    times_grown = zeros(T, size(currents))
+    times_grown[nonzero] .= nz_times_grown
+    return times_grown
 end
