@@ -6,7 +6,7 @@ function time_sim(assem_size::Int; mean_degree=100)
     n = assem_size^2
     p = mean_degree / n
     β = 0.1
-    ba = BrainAreas(1, n, assem_size, p, β)
+    ba = BrainAreas(num_areas=1, n=n, k=assem_size, p=p, β=β)
     ion_currents = [random_current(ba[1])]
     assems = Assembly{Float64}[]
     timesteps = 50
