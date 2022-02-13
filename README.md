@@ -42,4 +42,8 @@ ba = BrainAreas(num_areas=3, n=10_000, k=100, β=.01, p=.01)
 
 The code above will create two brain regions, each containing `n = 10_000` neurons with 
 an assembly size of `k = 100` neurons, a hebbian plasticity parameter of `β=0.01` and
-an edge probaility of `p=0.01`.
+an edge probability of `p=0.01`.
+
+The simulation API considers all regions inhibited unless they
+receive input current. To disinhibit an area without sending current
+to the neurons, use `zero_current(region)`.
