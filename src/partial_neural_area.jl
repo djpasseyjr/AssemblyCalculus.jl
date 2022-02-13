@@ -91,7 +91,13 @@ This is the classic assembly calculus model where number of neurons `n`,
 assembly size 'k', plasticity 'β' and synapse probability `p` is the same across
 all areas.
 """
-function BrainAreas(num_areas::Int, n::Int, k::Int, β::T, p::T) where T
+function BrainAreas(;
+    num_areas::Int = 1, 
+    n::Int = 10000, 
+    k::Int = 100, 
+    β::T = 0.01, 
+    p::T = 0.01
+) where T
     int_args = map(x -> repeat(x, num_areas), [[n], [k]])
     float_args = map(x -> repeat(x, num_areas), [[β], [p]])
     return BrainAreas(int_args..., float_args...)
