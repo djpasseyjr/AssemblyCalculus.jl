@@ -44,6 +44,18 @@ The code above will create two brain regions, each containing `n = 10_000` neuro
 an assembly size of `k = 100` neurons, a hebbian plasticity parameter of `β=0.01` and
 an edge probability of `p=0.01`.
 
+To run a simulation, create input currents to stimulate the brain areas. The following 
+code creates stimulus current into the second and third brain areas, and runs a simulation
+```
+stims = [random_currents(ba[2]), random_currents(ba[3])]
+assemblies, spikes, convergence = simulate!(stims)
+```
+
+The `simulate!` function runs until both brain areas converge on an assembly
+or for 50 iterations since this is the default for the `max_iters` keyword argument.
+
+## Important Details
+
 The simulation API considers all regions inhibited unless they
 receive input current. To disinhibit an area without sending current
 to the neurons, use `zero_current(region)`.
