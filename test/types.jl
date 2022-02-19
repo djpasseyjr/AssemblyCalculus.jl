@@ -1,7 +1,7 @@
 using AssemblyCalculus: Neuron, empty_synapses, num_synapses
 using AssemblyCalculus: NeuralArea, num_neurons, random_firing!, winners!, change_in_assembly
-using AssemblyCalculus: IonCurrent, random_current, zero_current
-using AssemblyCalculus: getneuron, globalindex, select, neuron_attrib_graph
+using AssemblyCalculus: Stimulus, rand_stim, zero_stim
+using AssemblyCalculus: getneuron, globalindex, select, neuron_attrib_graph, freeze_synapses!
 using AssemblyCalculus: MaxIters, Converge
 using Graphs
 using StatsBase
@@ -107,26 +107,26 @@ end
     end
 end
 
-@testset "IonCurrent Type" begin
-    getparam(ic::IonCurrent{T}) where T = T
+@testset "Stimulus Type" begin
+    getparam(ic::Stimulus{T}) where T = T
     @testset "Constructors" begin
-        @test getparam(IonCurrent()) == Float64
-        @test getparam(IonCurrent(Float32)) == Float32
+        @test getparam(Stimulus()) == Float64
+        @test getparam(Stimulus(Float32)) == Float32
         area1 = NeuralArea(4000, 20, 0.01)
         # One edge per neuron
         for neuron in area1
             neuron[area1, neuron] = 1.0
         end
-        ic = random_current(area1)
+        ic = rand_stim(area1)
         @test ic.area == area1
         @test length(ic.currents) == length(area1)
         @test 0.001 < mean(ic.currents) < 0.01
-        ic = random_current(area1, p=1. / 400)
+        ic = rand_stim(area1, p=1. / 400)
         @test ic.area == area1
         @test length(ic.currents) == length(area1)
         @test 0.01 < mean(ic.currents) < 0.1
-        @test sum(zero_current(area1).currents) == 0
-        @test_throws ErrorException random_current(area1, p=1.0)
+        @test sum(zero_stim(area1).currents) == 0
+        @test_throws ErrorException rand_stim(area1, p=1.0)
     end
 end
 
@@ -136,31 +136,33 @@ end
         @test getparam(Assembly()) == Float64
         @test getparam(Assembly(Float32)) == Float32
         area1 = NeuralArea(100, 10, 0.01)
-        ic = zero_current(area1)
+        ic = zero_stim(area1)
         @test_throws ErrorException Assembly(area1, [ic], Assembly{Float64}[])
         random_firing!(area1)
         a = Assembly(area1, [ic], Assembly{Float64}[])
         @test a.area == area1
-        @test length(a.parent_currents) == 1
+        @test length(a.parent_stims) == 1
         @test length(a.parent_assemblies) == 0
         @test length(a.neurons) == area1.assembly_size
     end
 end
 
-@testset "BrainAreas" begin
+@testset "Brain" begin
     g = erdos_renyi(10, 1.0, is_directed=true)
     sizes = [3, 3, 4]
     assemblies = [1, 1, 2]
     plasticities = [.01f0, .01f0, .01f0]
-    ba = BrainAreas(g, sizes, assemblies, plasticities)
+    ba = Brain(g, sizes, assemblies, plasticities)
     @testset "Constructors" begin
         @test length(ba) == 3
         @test typeof(ba[2]) == NeuralArea{Float32}
         @test num_synapses(ba) == 90
         @test num_neurons(ba) == 10
         adj = Float32.(rand(10, 10) .< 0.2)
-        ba = BrainAreas(adj, sizes, assemblies, plasticities)
+        ba = Brain(adj, sizes, assemblies, plasticities)
         @test all(adj .== adjacency_matrix(ba))
+        freeze_synapses!(ba)
+        @test all([a.plasticity for a in ba.areas] .== 0)
     end
     @testset "Type Utilities" begin
         g_idx = 5

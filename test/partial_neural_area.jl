@@ -1,20 +1,20 @@
-using AssemblyCalculus: PartialNeuralArea, generate_synapses
+using AssemblyCalculus: PartialArea, generate_synapses
 
 @testset "Constructors" begin
-    pna = PartialNeuralArea(Float32)
+    pna = PartialArea(Float32)
     @test length(pna) == 0
     @test num_neurons(pna) == 0
-    pna = PartialNeuralArea(10, 3, 0.01f0, 0.2f0)
+    pna = PartialArea(10, 3, 0.01f0, 0.2f0)
     @test length(pna) == 10
     @test num_neurons(pna) == 10
 end
 
 @testset "Utilities" begin
     T = Float32
-    area1 = PartialNeuralArea(T)
+    area1 = PartialArea(T)
     neuron1 = Neuron(area1, 1)
     push!(area1.neurons, neuron1)
-    area2 = PartialNeuralArea(T)
+    area2 = PartialArea(T)
     neuron2 = Neuron(area2, 1)
     push!(area2.neurons, neuron2)
     neuron1[area2, neuron2] = 1.5f0
@@ -60,10 +60,10 @@ end
     # Make an area
     num_neurons = 10
     T = Float32
-    area1 = PartialNeuralArea(num_neurons, 3, 1.f0, 0f0)
-    area2 = PartialNeuralArea(num_neurons, 3, 1.f0, 0f0)
+    area1 = PartialArea(num_neurons, 3, 1.f0, 0f0)
+    area2 = PartialArea(num_neurons, 3, 1.f0, 0f0)
     current = ones(T, 10)
-    ag = neuron_attrib_graph(T, PartialNeuralArea{T})
+    ag = neuron_attrib_graph(T, PartialArea{T})
     # Make synapses
     for i in 1:num_neurons
         source = area1[i]
@@ -93,16 +93,16 @@ end
     currents = zeros(T, 10)
     pows = [1., 2, 4, 1, 8]
     currents[1:5] .= init_currents[1:5] .* (2f0 .^ pows)
-    ag = neuron_attrib_graph(T, PartialNeuralArea{T})
+    ag = neuron_attrib_graph(T, PartialArea{T})
     ic_currents = zeros(T, 10)
     ic_currents[1:5] .= init_currents[1:5]
-    ic = IonCurrent(area2, ic_currents)
+    ic = Stimulus(area2, ic_currents)
     hebb_update!(ag, ic, currents, init_currents)
     @test all(ic.currents .== currents)
 
     ic_currents = zeros(T, 10)
     ic_currents[1:3] .= init_currents[1:3]
-    ic = IonCurrent(area2, ic_currents)
+    ic = Stimulus(area2, ic_currents)
     for i in 1:3
         contrib = get!(ag, area2[i])
         push!(contrib, area1[i])
@@ -119,7 +119,7 @@ end
 @testset "Firing" begin
     T = Float32
     num_neurons = 10
-    areas = [PartialNeuralArea(num_neurons, 3, 1.f0, 0f0) for i in 1:3]
+    areas = [PartialArea(num_neurons, 3, 1.f0, 0f0) for i in 1:3]
     a1, a2, a3 = areas
     # Make synapses
     for i in 1:num_neurons
@@ -134,7 +134,7 @@ end
     # Assembly firing
     currents = zeros(Float32, num_neurons)
     random_firing!.(areas)
-    assem = Assembly(a2, IonCurrent{T}[], Assembly{T}[])
+    assem = Assembly(a2, Stimulus{T}[], Assembly{T}[])
     ag = neuron_attrib_graph(Float32, typeof(a2))
     fire!(assem, a1, currents, ag)
     @test all(currents .== 0f0)
@@ -164,11 +164,11 @@ end
     mean_degree = 100f0
     p = mean_degree / n
 
-    ba = BrainAreas(1, n, k, β, p)
+    ba = Brain(num_areas=1, n=n, k=k, β=β, p=p)
     random_firing!(ba[1])
     init_firing = ba[1].firing
-    stims = [random_current(ba[1])]
-    init_currents = stims[1].currents
+    stims = [rand_stim(ba[1])]
+    init_currents = deepcopy(stims[1].currents)
     assems = Assembly{Float32}[]
     new_assems, spikes, dists = simulate!(
         stims,
@@ -183,9 +183,9 @@ end
 
     adj = adjacency_matrix(ba)
     adj[adj .!= 0f0] .= 1.f0
-    ba2 = BrainAreas(adj, [n], [k], [β])
+    ba2 = Brain(adj, [n], [k], [β])
     ba2[1].firing = init_firing
-    stims2 = [IonCurrent(ba2[1], init_currents)]
+    stims2 = [Stimulus(ba2[1], init_currents)]
     new_assems2, spikes2, dists2 = simulate!(
         stims2,
         assems,

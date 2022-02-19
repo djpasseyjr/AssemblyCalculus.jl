@@ -74,9 +74,9 @@ function Base.show(io::IO, n::Neuron{T, U}) where {T, U}
 end
 
 ## NEURALAREA
-abstract type BrainRegion{T} end
+abstract type BrainArea{T} end
 
-mutable struct NeuralArea{T} <: BrainRegion{T}
+mutable struct NeuralArea{T} <: BrainArea{T}
     neurons::Array{Neuron{T, NeuralArea{T}}, 1}
     assembly_size::Int
     firing::Array{Int, 1}
@@ -107,7 +107,7 @@ function Neuron(T::Type=Float64)
 end
 
 """Initialize a neuron belonging to a particular area."""
-function Neuron(area::BrainRegion{T}, i::Int) where T
+function Neuron(area::BrainArea{T}, i::Int) where T
     Neuron(area, i, empty_synapses(typeof(area), T))
 end
 
@@ -118,20 +118,20 @@ function Base.show(io::IO, na::NeuralArea{T}) where T
 end
 
 """Number of neurons in a  `NeuralArea`."""
-Base.length(na::BrainRegion{T}) where T = length(na.neurons)
+Base.length(na::BrainArea{T}) where T = length(na.neurons)
 
 """Iterate through neurons in a NeuralArea."""
-Base.iterate(na::BrainRegion{T}) where T = iterate(na.neurons)
-Base.iterate(na::BrainRegion{T}, i::Int64) where T = iterate(na.neurons, i)
+Base.iterate(na::BrainArea{T}) where T = iterate(na.neurons)
+Base.iterate(na::BrainArea{T}, i::Int64) where T = iterate(na.neurons, i)
 
 """Retrive neuron at index `i` in the neuron list."""
-Base.getindex(na::BrainRegion{T}, i::Int) where T = na.neurons[i]
+Base.getindex(na::BrainArea{T}, i::Int) where T = na.neurons[i]
 
-num_neurons(na::BrainRegion{T}) where T = length(na)
-num_synapses(na::BrainRegion{T}) where T = length(na) == 0 ? 0 : mapreduce(num_synapses, +, na.neurons)
+num_neurons(na::BrainArea{T}) where T = length(na)
+num_synapses(na::BrainArea{T}) where T = length(na) == 0 ? 0 : mapreduce(num_synapses, +, na.neurons)
 
 """Randomly assigns neurons in the area to fire."""
-function random_firing!(area::BrainRegion{T}) where T
+function random_firing!(area::BrainArea{T}) where T
     length(area) < area.assembly_size && error(string(
         "NeuralArea assembly size ($(area.assembly_size)) is larger than the ",
         "number of neurons in the area ($(length(area))."))
@@ -139,7 +139,7 @@ function random_firing!(area::BrainRegion{T}) where T
 end
 
 """Assigns the indexes of the k largest currents in `currents` to `na.firing`."""
-function winners!(area::BrainRegion{T}, currents::Array{T}) where T
+function winners!(area::BrainArea{T}, currents::Array{T}) where T
     # Validate
     length(area) != length(currents) && error(string(
         "Number of neurons in area ($(length(area))) must equal the number of ",
@@ -174,144 +174,167 @@ function winners!(area::BrainRegion{T}, currents::Array{T}) where T
     end
 end
 
-function change_in_assembly(area::BrainRegion{T}) where T
+"""Extract the assembly of currently firing neurons.
+
+If the assembly is smaller than `area.assembly_size`, pad with zeros.
+"""
+function get_firing(area::BrainArea{T}) where T
+    firing = area.firing
+    firing = vcat(firing, zeros(Int, area.assembly_size - length(firing)))
+    return reshape(firing, :, 1)
+end
+
+function change_in_assembly(area::BrainArea{T}) where T
     difference = area.assembly_size - length(intersect(area.firing, area.firing_prev))
+    return difference
+end
+
+function freeze_synapses!(area::BrainArea{T}) where T
+    area.plasticity = T(0)
 end
 
 
 ## IONCURRENT
 
-# TODO rename to Stimulus
-
-mutable struct IonCurrent{T}
-    area::BrainRegion{T}
+mutable struct Stimulus{T}
+    area::BrainArea{T}
     currents::Array{T, 1}
 end
 
-IonCurrent(T::Type=Float64) = IonCurrent(NeuralArea(T), T[])
+Stimulus(T::Type=Float64) = Stimulus(NeuralArea(T), T[])
 
 """Constructs a random pattern of ionic currents corresponding to the
-passed `NeuralArea`. Returns a `IonCurrent` type.
+passed `NeuralArea`. Returns a `Stimulus` type.
 """
-function random_current(area::BrainRegion{T}; p::Union{Nothing, T} = nothing) where T
+function rand_stim(area::BrainArea{T}; p::Union{Nothing, T} = nothing) where T
     n = num_neurons(area)
     if p == nothing
         p = mapreduce(x -> num_synapses(x, area), +, area.neurons) / (n ^ 2)
     elseif ! (0 < p < 1)
         error("Argument `p` must be `nothing`, or be in the interval (0, 1).")
     end
-    currents = rand(Binomial(area.assembly_size, p), n)
-    return IonCurrent(area, T.(currents))
+    currents = rand(Binomial(area.assembly_size, Float64(p)), n)
+    return Stimulus(area, T.(currents))
 end
 
-""" Constructs an `IonCurrent` that sends zero current to all the neurons
+""" Constructs an `Stimulus` that sends zero current to all the neurons
 in the passed `NeuralArea`.
 """
-function zero_current(area::BrainRegion{T}) where T
+function zero_stim(area::BrainArea{T}) where T
     n = num_neurons(area)
-    return IonCurrent(area, zeros(T, n))
+    return Stimulus(area, zeros(T, n))
 end
 
-function Base.show(io::IO, ic::IonCurrent{T}) where T
+function Base.show(io::IO, ic::Stimulus{T}) where T
     n = length(ic.currents)
-    print(io, "IonCurrent{$T} into $n neurons")
+    print(io, "Stimulus{$T} into $n neurons")
 end
 
 ## ASSEMBLY
 
 mutable struct Assembly{T}
-    area::BrainRegion{T}
+    area::BrainArea{T}
     neurons::Array{Int, 1}
-    parent_currents::Array{IonCurrent{T}, 1}
+    parent_stims::Array{Stimulus{T}, 1}
     parent_assemblies::Array{Assembly{T}, 1}
 end
 
-Assembly(T::Type=Float64) = Assembly(NeuralArea(T), Int[], IonCurrent{T}[], Assembly{T}[])
+Assembly(T::Type=Float64) = Assembly(NeuralArea(T), Int[], Stimulus{T}[], Assembly{T}[])
 
 function Assembly(
-    na::BrainRegion{T},
-    parent_currents::Array{IonCurrent{T}, 1},
+    na::BrainArea{T},
+    parent_stims::Array{Stimulus{T}, 1},
     parent_assemblies::Array{Assembly{T}, 1},
 ) where T
     if length(na.firing) == 0
         error("No neurons firing in `NeuralArea`")
     end
-    return Assembly(na, na.firing, parent_currents, parent_assemblies)
+    return Assembly(na, na.firing, parent_stims, parent_assemblies)
 end
 
-Assembly(area::BrainRegion{T}) where T = Assembly(area, IonCurrent{T}[], Assembly{T}[])
+Assembly(area::BrainArea{T}) where T = Assembly(area, Stimulus{T}[], Assembly{T}[])
 
 function Base.show(io::IO, assem::Assembly{T}) where T
     k = length(assem.neurons)
     print(io, "Assembly{$T} of $k neurons")
 end
+overlap(a1::Array{Int, 1}, a2::Array{Int, 1}) = length(intersect(a1, a2))
+overlap(a1::Assembly{T}, a2::Assembly{T}) where T = overlap(a1.neurons, a2.neurons)
 
+"""Deletes pointers to the assemblies and stimuli that created this `Assembly.`
+"""
+function forget_parents!(a::Assembly{T}) where T
+    a.parent_stims = Stimulus{T}[]
+    a.parent_assemblies = Assembly{T}[]
+end
 
 ## BRAINAREAS
-mutable struct BrainAreas{K, T}
-    areas::Array{<:BrainRegion{T}, 1}
+mutable struct Brain{K, T}
+    areas::Array{<:BrainArea{T}, 1}
     names::Array{K, 1}
 end
 
-"""Returns the number of neural areas in a `BrainAreas` type."""
-Base.length(ba::BrainAreas{K, T}) where {K, T} = length(ba.areas)
+"""Returns the number of neural areas in a `Brain` type."""
+Base.length(br::Brain{K, T}) where {K, T} = length(br.areas)
 
-"""Returns the `i`th `NeuralArea` stored in `BrainAreas`.
+"""Returns the `i`th `NeuralArea` stored in `Brain`.
 """
-Base.getindex(ba::BrainAreas{K, T}, i::Int) where {K, T} = ba.areas[i]
+Base.getindex(br::Brain{K, T}, i::Int) where {K, T} = br.areas[i]
 
 """Selects the `NeuralArea` corresponding to the given name."""
-function select(ba::BrainAreas{K, T}, k::K) where {K, T}
-    i = findfirst(ba.names .== k)
+function select(br::Brain{K, T}, k::K) where {K, T}
+    i = findfirst(br.names .== k)
     i == nothing && error("No brain area with name $k.")
-    return ba.areas[i]
+    return br.areas[i]
 end
 
-"""Total number of synapses in `BrainAreas`."""
-num_synapses(ba::BrainAreas{K, T}) where {K, T} = mapreduce(num_synapses, +, ba.areas)
-"""Total number of neurons in `BrainAreas`."""
-num_neurons(ba::BrainAreas{K, T}) where {K, T} = mapreduce(length, +, ba.areas)
+"""Total number of synapses in `Brain`."""
+num_synapses(br::Brain{K, T}) where {K, T} = mapreduce(num_synapses, +, br.areas)
+"""Total number of neurons in `Brain`."""
+num_neurons(br::Brain{K, T}) where {K, T} = mapreduce(length, +, br.areas)
+"""Turns off plasticity."""
+freeze_synapses!(br::Brain{K, T}) where {K, T} = map(freeze_synapses!, br.areas)
 
-function Base.show(io::IO, ba::BrainAreas{K, T}) where {K, T}
-    descr = "BrainAreas{$K, $T}: $(num_neurons(ba)) neurons $(num_synapses(ba)) synapses"
+function Base.show(io::IO, br::Brain{K, T}) where {K, T}
+    descr = "Brain{$K, $T}: $(num_neurons(br)) neurons $(num_synapses(br)) synapses"
     print(io, descr)
-    for (name, area) in zip(ba.names, ba.areas)
+    for (name, area) in zip(br.names, br.areas)
         print(io, "\n\t")
         print(io, "$name => ")
         print(io, area)
     end
 end
 
-"""Returns the index of `neuron` with respect to all neurons in the `BrainAreas`.
+"""Returns the index of `neuron` with respect to all neurons in the `Brain`.
 """
-function globalindex(ba::BrainAreas{K, T}, neuron::Neuron{T}) where {K, T}
-    return globalindex(ba, neuron.area, neuron.idx)
+function globalindex(br::Brain{K, T}, neuron::Neuron{T}) where {K, T}
+    return globalindex(br, neuron.area, neuron.idx)
 end
 
 """Returns the index of the neuron in `na` at index `idx` with respect to
-all neurons in the `BrainAreas`.
+all neurons in the `Brain`.
 """
-function globalindex(ba::BrainAreas{K, T}, na::BrainRegion{T}, idx::Int) where {K, T}
-    i = findfirst([a == na for a in ba.areas])
-    i == nothing && error("Given BrainRegion not found in BrainAreas")
-    return globalindex(ba, i, idx)
+function globalindex(br::Brain{K, T}, na::BrainArea{T}, idx::Int) where {K, T}
+    i = findfirst([a == na for a in br.areas])
+    i == nothing && error("Given BrainArea not found in Brain")
+    return globalindex(br, i, idx)
 end
 
-"""Given the index, `area_idx`, for a `NeuralArea` within `ba`, and and index
+"""Given the index, `area_idx`, for a `NeuralArea` within `br`, and and index
 `idx` of a neuron in the `NeuralArea` corresponding to `area_idx`, returns the
-`index` of the neuron relative to all neurons in `ba`.
+`index` of the neuron relative to all neurons in `br`.
 """
-function globalindex(ba::BrainAreas{K, T}, area_idx::Int, idx::Int) where {K, T}
-    global_idx = sum([length(a) for a in ba.areas[1:(area_idx-1)]]) + idx
+function globalindex(br::Brain{K, T}, area_idx::Int, idx::Int) where {K, T}
+    global_idx = sum([length(a) for a in br.areas[1:(area_idx-1)]]) + idx
     return global_idx
 end
 
-"""For the given `BrainAreas`, and the index of a `Neuron` in the `BrainAreas`,
+"""For the given `Brain`, and the index of a `Neuron` in the `Brain`,
 return the local index, `(area_idx, idx)`. That is, the index of the neruon's
-parent area, `area_idx` (within `ba`) and the neuron's index within its
+parent area, `area_idx` (within `br`) and the neuron's index within its
 parent `NeuralArea`, `idx`."""
-function localindex(ba::BrainAreas{K, T}, global_idx::Int) where {K, T}
-    area_sizes = [length(na) for na in ba.areas]
+function localindex(br::Brain{K, T}, global_idx::Int) where {K, T}
+    area_sizes = [length(na) for na in br.areas]
     area_adjusted_idxs = cumsum(area_sizes) .- global_idx
     area_idx = findfirst(area_adjusted_idxs .>= 0)
     prior_areas = [area_sizes[j] for j in 1:(area_idx - 1)]
@@ -319,25 +342,25 @@ function localindex(ba::BrainAreas{K, T}, global_idx::Int) where {K, T}
     return area_idx, idx
 end
 
-"""Access the `i`th neuron in the `BrainAreas`.
+"""Access the `i`th neuron in the `Brain`.
 
 `Neurons` are assumed to be indexed consecutively along the `NeuralArea`s.
 That is, if `a1` is a neural area with 200 `Neurons` and `a2` is a `NeuralArea`
 with 100 `Neurons`, then if
 
-    ba = BrainAreas([a1, a2], [1, 2])
+    br = Brain([a1, a2], [1, 2])
 
-`getneuron(ba, 201)` will return the first neuron in `a2` (`a2[1]`) and
-`getneuron(ba, 1)` will return the first neuron in `a1`.
+`getneuron(br, 201)` will return the first neuron in `a2` (`a2[1]`) and
+`getneuron(br, 1)` will return the first neuron in `a1`.
 
 """
-function getneuron(ba::BrainAreas{K, T}, global_idx::Int) where {K, T}
-    area, idx = localindex(ba, global_idx)
-    return ba[area][idx]
+function getneuron(br::Brain{K, T}, global_idx::Int) where {K, T}
+    area, idx = localindex(br, global_idx)
+    return br[area][idx]
 end
 
 """Builds a network of brain areas from a `DiGraph`."""
-function BrainAreas(
+function Brain(
     g::DiGraph,
     area_sizes::Array{Int, 1},
     assembly_sizes::Array{Int, 1},
@@ -345,7 +368,7 @@ function BrainAreas(
 ) where T
     # Make neural areas
     areas = [NeuralArea(n, k, β) for (n, k, β) in zip(area_sizes, assembly_sizes, plasticities)]
-    brain_areas = BrainAreas(areas, collect(1:length(areas)))
+    brain_areas = Brain(areas, collect(1:length(areas)))
     for e in edges(g)
         source = getneuron(brain_areas, e.src)
         target = getneuron(brain_areas, e.dst)
@@ -354,29 +377,29 @@ function BrainAreas(
     return brain_areas
 end
 
-"""Initializes `BrainAreas` from an adjacency matrix."""
-function BrainAreas(
+"""Initializes `Brain` from an adjacency matrix."""
+function Brain(
     adj::Array{T, 2},
     area_sizes::Array{Int, 1},
     assembly_sizes::Array{Int, 1},
     plasticities::Array{T, 1},
 ) where T
-    return BrainAreas(DiGraph(transpose(adj)), area_sizes, assembly_sizes, plasticities)
+    return Brain(DiGraph(transpose(adj)), area_sizes, assembly_sizes, plasticities)
 end
 
-"""Returns the adjacency matrix of a given `BrainAreas` type. This may be
-incomplete if the `BrainAreas.areas` field contains `PartialNeuralAreas` because
+"""Returns the adjacency matrix of a given `Brain` type. This may be
+incomplete if the `Brain.areas` field contains `PartialNeuralAreas` because
 some synapses may not be generated yet.
 """
-function Graphs.adjacency_matrix(ba::BrainAreas{K, T}) where {K, T}
-    n = num_neurons(ba)
+function Graphs.adjacency_matrix(br::Brain{K, T}) where {K, T}
+    n = num_neurons(br)
     adj = zeros(T, n, n)
-    for a in ba.areas
+    for a in br.areas
         for neuron in a.neurons
-            source_idx = globalindex(ba, neuron)
+            source_idx = globalindex(br, neuron)
             for area in keys(neuron.synapses)
                 for (target_neuron, weight) in neuron[area]
-                    target_idx = globalindex(ba, target_neuron)
+                    target_idx = globalindex(br, target_neuron)
                     adj[target_idx, source_idx] = weight
                 end
             end
@@ -436,7 +459,7 @@ Developers must implement a function
 
     assess!(
         sc::ConcreteStopCriteria,
-        areas::Array{<:BrainRegion{T}},
+        areas::Array{<:BrainArea{T}},
         currents::Array{Array{T, 1}}
     ) where T
 
@@ -455,7 +478,7 @@ abstract type StopCriteria end
 calculus simulation should end). Optionally stores the currently firing neurons.
 """
 function (sc::StopCriteria)(
-    areas::Array{<:BrainRegion{T}},
+    areas::Array{<:BrainArea{T}},
     currents::Array{Array{T, 1}}
 ) where T
     store!(sc, areas)
@@ -465,9 +488,9 @@ end
 """Stores the currently firing neurons from each passed area inside the
 `StopCriteria.spikes` field.
 """
-function store!(sc::StopCriteria, areas::Array{<:BrainRegion{T}, 1}) where T
+function store!(sc::StopCriteria, areas::Array{<:BrainArea{T}, 1}) where T
     if sc.record
-        firing = [reshape(a.firing, :, 1)  for a in areas]
+        firing = map(get_firing, areas)
         if sc.curr_iter == 0
             sc.spikes = firing
         else
@@ -489,7 +512,7 @@ end
 
 Creates a MaxIters stop critera for assembly calculus simulations.
 
-Passing a `MaxIters` object an `Array{<:BrainRegion{T}, 1}`,
+Passing a `MaxIters` object an `Array{<:BrainArea{T}, 1}`,
 and a `Array{Array{T, 1}}` will return `false` exactly `max_iters` times in a row
 and will return `true` afterwards.
 
@@ -505,7 +528,7 @@ end
 
 function assess!(
     mi::MaxIters,
-    areas::Array{<:BrainRegion{T}, 1},
+    areas::Array{<:BrainArea{T}, 1},
     currents::Array{Array{T, 1}}
 ) where T
     stop = mi.curr_iter >= mi.max_iters + 1
@@ -537,7 +560,7 @@ Retains all functionality of the `MaxIters` stop criteria, but will end a
 simulation early if "convergence" criteria is met. The convergence criteria
 is determined by `tol` and `fire_past_convergence`.
 
-Each time a `Converge` type is passed an `Array{<:BrainRegion{T}, 1}`
+Each time a `Converge` type is passed an `Array{<:BrainArea{T}, 1}`
 and an `Array{Array{T, 1}}`, it assesses the difference between each
 `NeuralArea.firing` and `NeuralArea.firing_prev`. If the number of neurons that
 appear in `NeuralArea.firing` but not in `NeuralArea.firing_prev` is less than
@@ -562,7 +585,7 @@ end
 
 function assess!(
     cv::Converge,
-    areas::Array{<:BrainRegion{T}},
+    areas::Array{<:BrainArea{T}},
     currents::Array{Array{T, 1}}
 ) where T
     if cv.curr_iter == 1

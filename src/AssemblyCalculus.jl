@@ -9,7 +9,7 @@ module AssemblyCalculus
     include("simulation_functions.jl")
     include("partial_neural_area.jl")
 
-    export BrainAreas, Assembly, IonCurrent
-    export simulate!, random_firing!, random_current, zero_current
+    export Brain, Assembly, Stimulus
+    export simulate!, random_firing!, rand_stim, zero_stim
 
 end  # module AssemblyCalculus

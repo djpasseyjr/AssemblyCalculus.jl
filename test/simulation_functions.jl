@@ -42,13 +42,13 @@ using Graphs: adjacency_matrix
     ag = neuron_attrib_graph(T, NeuralArea{T})
     ic_currents = zeros(T, 10)
     ic_currents[1:5] .= init_currents[1:5]
-    ic = IonCurrent(area2, ic_currents)
+    ic = Stimulus(area2, ic_currents)
     hebb_update!(ag, ic, currents, init_currents)
     @test all(ic.currents .== currents)
 
     ic_currents = zeros(T, 10)
     ic_currents[1:3] .= init_currents[1:3]
-    ic = IonCurrent(area2, ic_currents)
+    ic = Stimulus(area2, ic_currents)
     for i in 1:3
         contrib = get!(ag, area2[i])
         push!(contrib, area1[i])
@@ -80,7 +80,7 @@ end
     # Assembly firing
     currents = zeros(Float32, num_neurons)
     random_firing!.(areas)
-    assem = Assembly(a2, IonCurrent{T}[], Assembly{T}[])
+    assem = Assembly(a2, Stimulus{T}[], Assembly{T}[])
     ag = neuron_attrib_graph(Float32, typeof(a2))
     fire!(assem, a1, currents, ag)
     @test all(currents .== 0f0)
@@ -155,14 +155,14 @@ true_distances[1, 1:2] .= 1
 area_sizes = [2, 2, 2]
 assembly_sizes =[1, 1, 2]
 plasticities = [1f0, 1f0, 2f0]
-ba = BrainAreas(adj, area_sizes, assembly_sizes, plasticities)
+ba = Brain(adj, area_sizes, assembly_sizes, plasticities)
 # Initial firing
 a1, a2, a3 = ba.areas
 a1.firing = [1]
 a2.firing = [1]
 a3.firing = [1, 2]
 # IonCurrents and Assemblies
-inputs = [IonCurrent(a1, ones(T, 2)), zero_current(a2)]
+inputs = [Stimulus(a1, ones(T, 2)), zero_stim(a2)]
 assemblies = [Assembly(a3)]
 # Simulate
 new_assems, spikes, distances = simulate!(
@@ -180,14 +180,14 @@ new_assems, spikes, distances = simulate!(
 
 # Rerun with MaxIters stop criteria
 timesteps = size(distances)[2] - 1
-ba = BrainAreas(adj, area_sizes, assembly_sizes, plasticities)
+ba = Brain(adj, area_sizes, assembly_sizes, plasticities)
 # Initial firing
 a1, a2, a3 = ba.areas
 a1.firing = [1]
 a2.firing = [1]
 a3.firing = [1, 2]
 # IonCurrents and Assemblies
-inputs = [IonCurrent(a1, ones(T, 2)), zero_current(a2)]
+inputs = [Stimulus(a1, ones(T, 2)), zero_stim(a2)]
 assemblies = [Assembly(a3)]
 new_assems, spikes = simulate!(inputs, assemblies, timesteps, random_initial=false)
 @test all(true_adj .== adjacency_matrix(ba))
@@ -195,14 +195,14 @@ new_assems, spikes = simulate!(inputs, assemblies, timesteps, random_initial=fal
 @test all([new_assems[i].neurons[1] == true_spikes[i][end] for i in 1:2])
 
 # Simulate w/o recording
-ba = BrainAreas(adj, area_sizes, assembly_sizes, plasticities)
+ba = Brain(adj, area_sizes, assembly_sizes, plasticities)
 # Initial firing
 a1, a2, a3 = ba.areas
 a1.firing = [1]
 a2.firing = [1]
 a3.firing = [1, 2]
 # IonCurrents and Assemblies
-inputs = [IonCurrent(a1, ones(T, 2)), zero_current(a2)]
+inputs = [Stimulus(a1, ones(T, 2)), zero_stim(a2)]
 assemblies = [Assembly(a3)]
 new_assems = simulate!(
     inputs,

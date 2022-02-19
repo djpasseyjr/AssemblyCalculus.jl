@@ -9,54 +9,61 @@ Email: djpasseyjr@gmail.com
 ## SIMULATION WRAPPERS
 
 function simulate!(
-    inputs::Array{IonCurrent{T}, 1},
+    stims::Array{Stimulus{T}, 1},
     assemblies::Array{Assembly{T}, 1},
     stop_criteria::StopCriteria;
     random_initial::Bool = true
 ) where T
-    # TODO Validate inputs and assemblies
-    active_areas = [inp.area for inp in inputs]
-    # Consolidate input current with current from assemblies
-    currents, assem_attrib = simulation_currents(inputs, assemblies)
-    # Save initial input currents
+    # TODO Validate stims and assemblies
+    active_areas = [inp.area for inp in stims]
+    # Consolidate stim current with current from assemblies
+    currents, assem_attrib = simulation_currents(stims, assemblies)
+    # Save initial stim currents
     init_currents = deepcopy(currents)
     # Assign random neurons to fire initially
     random_initial && map(random_firing!, active_areas)
-    # Allocate ion current arrays for each area
-    # TODO better name for next_currents (Stimulus!)
-    next_currents = deepcopy(currents)
+    # Allocate firing and stim current arrays for each area
+    firing_and_currents = deepcopy(currents)
     # stop_criteria checks for convergence
     while ! stop_criteria(active_areas, currents)
-        # All neurons fire
-        attrib = fire!(active_areas, next_currents)
-        # Compute k winners
-        map(winners!, active_areas, next_currents)
+        # All neurons fire and modulate firing_and_currents
+        attrib = fire!(active_areas, firing_and_currents)
+        # Compute k winners based on firing and stimulus current vectors
+        map(winners!, active_areas, firing_and_currents)
         # Hebbian update for synapses
         map(area -> hebb_update!(area, attrib), active_areas)
         # Hebbian update for currents
         map(hebb_update!, active_areas, currents)
-        # Reset currents
-        next_currents = deepcopy(currents)
+        # Reset firing_and_currents to exclude firing data
+        firing_and_currents = deepcopy(currents)
     end
     # Hebbian update to assembly synapses
-    map(x -> hebb_update!(assem_attrib, x...), zip(inputs, currents, init_currents))
-    final_assemblies = map(x -> Assembly(x, inputs, assemblies), active_areas)
+    map(x -> hebb_update!(assem_attrib, x...), zip(stims, currents, init_currents))
+    final_assemblies = map(x -> Assembly(x, stims, assemblies), active_areas)
     return final_assemblies
 end
 
 function simulate!(
-    inputs::Array{IonCurrent{T}, 1},
+    stims::Array{Stimulus{T}, 1},
     assemblies::Array{Assembly{T}, 1},
     timesteps::Int;
     random_initial::Bool = true
 ) where T
     stop_criteria = MaxIters(max_iters=timesteps, record=true)
-    new_assemblies = simulate!(inputs, assemblies, stop_criteria, random_initial=random_initial)
+    new_assemblies = simulate!(stims, assemblies, stop_criteria, random_initial=random_initial)
     return new_assemblies, stop_criteria.spikes
 end
 
 function simulate!(
-    inputs::Array{IonCurrent{T}, 1},
+    stims::Array{Stimulus{T}, 1},
+    timesteps::Int;
+    random_initial::Bool = true
+) where T
+    return simulate!(stims, Assembly{T}[], timesteps; random_initial=random_initial)
+end
+
+function simulate!(
+    stims::Array{Stimulus{T}, 1},
     assemblies::Array{Assembly{T}, 1};
     record = true,
     tol::Int = 2,
@@ -70,7 +77,7 @@ function simulate!(
         max_iters=max_iters,
         record=record
     )
-    new_assemblies = simulate!(inputs, assemblies, stop_criteria, random_initial=random_initial)
+    new_assemblies = simulate!(stims, assemblies, stop_criteria, random_initial=random_initial)
     if record
         return new_assemblies, stop_criteria.spikes, stop_criteria.distances
     else
@@ -78,10 +85,27 @@ function simulate!(
     end
 end
 
-
+function simulate!(
+    stims::Array{Stimulus{T}, 1};
+    record = true,
+    tol::Int = 2,
+    fire_past_convergence::Int = 0,
+    max_iters::Int = 50,
+    random_initial::Bool = true
+) where T
+    return simulate!(
+                stims,
+                Assembly{T}[],
+                record=record,
+                tol=tol,
+                fire_past_convergence=fire_past_convergence,
+                max_iters=max_iters,
+                random_initial=random_initial
+            )
+end
 """
     simulation_currents(
-        inputs::Array{IonCurrent{T}, 1},
+        stims::Array{Stimulus{T}, 1},
         assemblies::Array{Assembly{T}, 1}
     ) where T -> currents, attribution
 
@@ -90,19 +114,19 @@ graph to be used for ion current and assembly plasticity updates.
 
 **Parameters**
 
-1. `inputs` The list of IonCurrents to be used in the simulation
+1. `stims` The list of IonCurrents to be used in the simulation
 2. `assemblies` The list of active Assemblies for the simulation
 
 """
 function simulation_currents(
-    inputs::Array{IonCurrent{T}, 1},
+    stims::Array{Stimulus{T}, 1},
     assemblies::Array{Assembly{T}, 1} = Assembly{T}[]
 ) where T
     # Allocate
-    currents = [zeros(T, size(inp.currents)) for inp in inputs]
-    attrib = neuron_attrib_graph(T, typeof(inputs[1].area))
+    currents = [zeros(T, size(inp.currents)) for inp in stims]
+    attrib = neuron_attrib_graph(T, typeof(stims[1].area))
     # Compute currents and attributions
-    for (i, inp) in enumerate(inputs)
+    for (i, inp) in enumerate(stims)
         currents[i] += inp.currents
         target_area = inp.area
         # Fire each assembly into the target area
@@ -118,7 +142,7 @@ end
 """
     fire!(
         assembly::Assembly{T},
-        area::BrainRegion{T},
+        area::BrainArea{T},
         currents::Array{T, 1},
         attrib::AttributionGraph{Neuron{T, U}}
     ) where {T, U}
@@ -128,7 +152,7 @@ currents to corresponding neuron indexes in `current` array.
 """
 function fire!(
     assembly::Assembly{T},
-    area::BrainRegion{T},
+    area::BrainArea{T},
     currents::Array{T, 1},
     attrib::AttributionGraph{Neuron{T, U}}
 ) where {T, U}
@@ -141,8 +165,8 @@ end
 
 """
     fire!(
-        source_area::BrainRegion{T},
-        target_area::BrainRegion{T},
+        source_area::BrainArea{T},
+        target_area::BrainArea{T},
         target_currents::Array{T, 1},
         attrib::AttributionGraph{Neuron{T, U}}
     ) where {T, U}
@@ -152,8 +176,8 @@ currents to corresponding neuron indexes in `currents` array. Collects
 neurons into the attribution graph.
 """
 function fire!(
-    source_area::BrainRegion{T},
-    target_area::BrainRegion{T},
+    source_area::BrainArea{T},
+    target_area::BrainArea{T},
     target_currents::Array{T, 1},
     attrib::AttributionGraph{Neuron{T, U}}
 ) where {T, U}
@@ -167,7 +191,7 @@ end
 """
     fire!(
         neuron::Neuron{T, U},
-        target_area::BrainRegion{T},
+        target_area::BrainArea{T},
         target_currents::Array{T, 1},
         attrib::AttributionGraph{Neuron{T, U}}
     ) where {T, U}
@@ -178,7 +202,7 @@ to the `AttributionGraph`.
 """
 function fire!(
     neuron::Neuron{T, U},
-    target_area::BrainRegion{T},
+    target_area::BrainArea{T},
     target_currents::Array{T, 1},
     attrib::AttributionGraph{Neuron{T, U}}
 ) where {T, U}
@@ -195,7 +219,7 @@ end
 
 """
     fire!(
-        areas::Array{<:BrainRegion{T}, 1},
+        areas::Array{<:BrainArea{T}, 1},
         area_currents::Array{Array{T, 1}}
     ) where T -> attrib
 
@@ -203,7 +227,7 @@ Fires all active neurons in each area. Collects ion currents in `currents`.
 Returns an `AttributionGraph` of the firing.
 """
 
-function fire!(areas::Array{U, 1}, area_currents::Array{Array{T, 1}}) where {T, U <:BrainRegion{T}}
+function fire!(areas::Array{U, 1}, area_currents::Array{Array{T, 1}}) where {T, U <:BrainArea{T}}
     attrib = neuron_attrib_graph(T, U)
     for source_area in areas
         for (target_area, target_currents) in zip(areas, area_currents)
@@ -243,29 +267,29 @@ function hebb_update!(
 end
 
 """
-    hebb_update!(area::BrainRegion{T}, attrib::AttributionGraph{Neuron{T, U}})
+    hebb_update!(area::BrainArea{T}, attrib::AttributionGraph{Neuron{T, U}})
 
 Uses the attribution graph to update the synapses pointing to all currently
 firing neurons in `area`.
 """
-function hebb_update!(area::BrainRegion{T}, attrib::AttributionGraph{Neuron{T, U}}) where {T, U}
+function hebb_update!(area::BrainArea{T}, attrib::AttributionGraph{Neuron{T, U}}) where {T, U}
     map(n -> hebb_update!(n, attrib), area.neurons[area.firing])
 end
 
 """
-    hebb_update!(area::BrainRegion{T}, current::Array{T, 1}) where T
+    hebb_update!(area::BrainArea{T}, current::Array{T, 1}) where T
 
 Multiplicatively increases the current into currently firing neurons in `area`
 by a factor of `(1 + area.plasticity)`.
 """
-function hebb_update!(area::BrainRegion{T}, current::Array{T, 1}) where T
+function hebb_update!(area::BrainArea{T}, current::Array{T, 1}) where T
     current[area.firing] .*= (1 + area.plasticity)
 end
 
 """
     hebb_update!(
         attrib::AttributionGraph{Neuron{T, U}},
-        input::IonCurrent{T},
+        stim::Stimulus{T},
         currents::Array{T, 1},
         init_currents::Array{T, 1}
     ) where {T, U}
@@ -280,7 +304,7 @@ timestep.
 """
 function hebb_update!(
     attrib::AttributionGraph{Neuron{T, U}},
-    ic::IonCurrent{T},
+    ic::Stimulus{T},
     currents::Array{T, 1},
     init_currents::Array{T, 1},
 ) where {T, U}

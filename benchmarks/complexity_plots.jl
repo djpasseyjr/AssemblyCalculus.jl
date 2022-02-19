@@ -9,12 +9,12 @@ function time_sim(assem_size::Int; mean_degree=100)
     n = sum(area_sizes)
     p = mean_degree / n
     g = erdos_renyi(n, p, is_directed=true)
-    ba = BrainAreas(g, area_sizes, assembly_sizes, plasticities)
+    ba = Brain(g, area_sizes, assembly_sizes, plasticities)
     g = nothing
-    ion_currents = [random_current(ba[i]) for i in 1:2]
+    stims = [rand_stim(ba[i]) for i in 1:2]
     assems = Assembly{Float64}[]
     timesteps = 50
-    td = @timed as, sp = simulate!(ion_currents, assems, timesteps)
+    td = @timed as, sp = simulate!(stims, assems, timesteps)
     return td.time
 end
 
