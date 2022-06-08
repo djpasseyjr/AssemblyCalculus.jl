@@ -40,7 +40,7 @@ using AssemblyCalculus
 ba = Brain(num_areas=3, n=10_000, k=100, β=.01, p=.01)
 ```
 
-The code above will create two brain regions, each containing `n = 10_000` neurons with
+The code above will create three brain regions, each containing `n = 10_000` neurons with
 an assembly size of `k = 100` neurons, a hebbian plasticity parameter of `β=0.01` and
 an edge probability of `p=0.01`.
 
@@ -81,4 +81,4 @@ Here are the relationships between types
 7. `Brain` types point to all `BrainArea` types they house.
 
 In short, be sure to delete **all** objects related to `AssemblyCalculus.jl`
-types you wish to discard or they may inadvertently remain in memory. 
+types you wish to discard or they may inadvertently remain in memory.

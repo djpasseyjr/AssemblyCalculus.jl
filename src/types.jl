@@ -68,6 +68,16 @@ end
 """Constructs an empty synapse dictionary."""
 empty_synapses(U::Type, T::Type) = Dict{U, Dict{Neuron{T, U}, T}}()
 
+"""Add noise to edge weights to prevent ties."""
+function synapse_noise!(n::Neuron{T, U}; σ=0.01) where {T, U}
+    for group in values(n.synapses)
+        for neuron in keys(group)
+            w = group[neuron]
+            group[neuron] += σ * randn(T)
+        end
+    end
+end
+
 """Displays a `Neuron` object."""
 function Base.show(io::IO, n::Neuron{T, U}) where {T, U}
     print(io, "Neuron{$T}")
@@ -193,6 +203,9 @@ function freeze_synapses!(area::BrainArea{T}) where T
     area.plasticity = T(0)
 end
 
+function synapse_noise!(area::BrainArea{T}; σ=0.01) where T
+    map(x -> synapse_noise!(x, σ=σ), area.neurons)
+end
 
 ## IONCURRENT
 
@@ -294,6 +307,11 @@ num_synapses(br::Brain{K, T}) where {K, T} = mapreduce(num_synapses, +, br.areas
 num_neurons(br::Brain{K, T}) where {K, T} = mapreduce(length, +, br.areas)
 """Turns off plasticity."""
 freeze_synapses!(br::Brain{K, T}) where {K, T} = map(freeze_synapses!, br.areas)
+"""Add noise to edges to prevent kwta ties."""
+function synapse_noise!(brain::Brain{K, T}; σ=0.01) where {K, T}
+    map(x -> synapse_noise!(x, σ=σ), brain.areas)
+end
+
 
 function Base.show(io::IO, br::Brain{K, T}) where {K, T}
     descr = "Brain{$K, $T}: $(num_neurons(br)) neurons $(num_synapses(br)) synapses"
